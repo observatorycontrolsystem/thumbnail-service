@@ -1,6 +1,7 @@
 # Thumbnail service
 
-This is a flask application that generates thumbnails from data stored on an [OCS Science Archive](https://github.com/observatorycontrolsystem/science-archive)
+This is a flask application that generates thumbnails from data stored on an
+[OCS Science Archive](https://github.com/observatorycontrolsystem/science-archive).
 
 ## Requirements
 
