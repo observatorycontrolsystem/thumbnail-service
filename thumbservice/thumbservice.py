@@ -56,9 +56,10 @@ def get_response(url, params=None, headers=None):
     try:
         response = requests.get(url, headers=headers, params=params, timeout=10)
         response.raise_for_status()
-    except requests.RequestException:
+    except requests.RequestException as e:
         status_code = getattr(response, 'status_code', None)
         payload = {}
+        print(f"get response error: {e}")
         message = 'Got error response'
         if status_code is None or 500 <= status_code < 600:
             status_code = 502
@@ -103,9 +104,11 @@ def unique_temp_path_start():
 
 
 def save_temp_file(frame):
+    print("entered save tempfile")
     path = f'{unique_temp_path_start()}{frame["filename"]}'
     with open(path, 'wb') as f:
         f.write(get_response(frame['url']).content)
+        print("done with save tempfile")
     return path
 
 
@@ -120,17 +123,21 @@ def convert_to_jpg(paths, key, **params):
 
 
 def get_s3_client():
+    print("start of get s3 client")
     config = boto3.session.Config(region_name='us-west-2', signature_version='s3v4')
-    return boto3.client(
+    client = boto3.client(
         's3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
         endpoint_url=settings.STORAGE_URL,
         config=config,
     )
+    print("end of get s3 client")
+    return client
 
 
 def upload_to_s3(key, jpg_path):
+    print("start of upload to s3")
     client = get_s3_client()
     with open(jpg_path, 'rb') as f:
         client.put_object(
@@ -139,23 +146,30 @@ def upload_to_s3(key, jpg_path):
             Key=key,
             ContentType='image/jpeg'
         )
+    print("end of upload to s3")
 
 
 def generate_url(key):
+    print("start of generate URL")
     client = get_s3_client()
-    return client.generate_presigned_url(
+    url = client.generate_presigned_url(
         'get_object',
         ExpiresIn=3600 * 8,
         Params={'Bucket': settings.AWS_BUCKET, 'Key': key}
     )
+    print("end of generate url")
+    return url
 
 
 def key_exists(key):
+    print("start of key exists")
     client = get_s3_client()
     try:
         client.head_object(Bucket=settings.AWS_BUCKET, Key=key)
+        print("key exists")
         return True
     except:
+        print("key doesn't exist")
         return False
 
 
@@ -291,7 +305,9 @@ def thumbnail(frame_id):
     headers = {
         'Authorization': request.headers.get('Authorization')
     }
+    print("getting response from PK")
     frame = get_response(f'{settings.ARCHIVE_API_URL}frames/{frame_id}/', headers=headers).json()
+    print("got response from PK")
 
     return handle_response(frame, request)
 
