@@ -1,4 +1,11 @@
 import os
+import logging
+import numpy as np
+from astropy.io import fits
+
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 def get_temp_filename_prefix(pid=None):
@@ -7,6 +14,82 @@ def get_temp_filename_prefix(pid=None):
     pid = os.getpid() if pid is None else pid
     return f'pid{pid}-'
 
+
+def rebin(arr, binning):
+    # Reduce resolution of data array to help with identifying planets
+    # make sure the array is an integer number of our binning
+    xlim = arr.shape[0] - arr.shape[0] % binning
+    ylim = arr.shape[1] - arr.shape[1] % binning
+    new_shape = (int(arr.shape[0]/binning), int(arr.shape[1]/binning))
+    shape = (new_shape[0], arr.shape[0] // new_shape[0],
+             new_shape[1], arr.shape[1] // new_shape[1])
+    return arr[0:xlim,0:ylim].reshape(shape).mean(-1).mean(1)
+
+def find_planet(data):
+    # Find the planet in the image to perform an approximate align and crop
+    binning = 3
+    rebinned = rebin(data, binning)
+    max_coord = np.unravel_index(np.argmax(rebinned),rebinned.shape)
+
+    x1, x2 = binning*max_coord[0]-300, binning*max_coord[0]+300
+    y1, y2 = binning*max_coord[1]-300, binning*max_coord[1]+300
+    return data[x1:x2,y1:y2]
+
+def planet_image_data(filename, colour=False):
+    # Open the fits file and scale the image appropriately
+    with fits.open(filename) as hdul:
+        img = hdul['sci'].data
+        header = hdul['sci'].header
+
+    # Remove the background glow from scattered light   
+    cutoff = 200
+    img[img<cutoff] = 0
+    
+    n = 1.
+    
+    if colour and (header['FILTER'].lower() == 'h-alpha' or header['FILTER'] == 'V'):
+        n = 1.1
+        
+    if header['object'].lower() == 'saturn':
+        planet = 5.
+    elif header['object'].lower() == 'jupiter':
+        planet = 1.4 
+    elif header['object'].lower() == 'mars':
+        planet = 5.
+    elif header['object'].lower() == 'uranus':
+        n = 1.
+        planet = 0.5
+        if header['FILTER'] == 'B':
+            n = 1.5
+    else:
+        planet = 1.0
+    vals = planet*n*np.power(img, 0.5)
+    if np.max(vals) > 255:
+        # scaled to 8 bit for jpg generation
+        vals = vals/np.max(vals)*255
+    return vals
+
+def stack_images(images_to_stack):
+    rgb_cube = np.dstack(images_to_stack).astype(np.uint8)
+    return Image.fromarray(rgb_cube)
+
+def planet_image_to_jpg(filenames, output_path):
+    if len(filenames) >= 3:
+        stack = []
+        for filename in filenames:
+            data = planet_image_data(filename=filename, colour=True)
+            stack.append(find_planet(data))
+
+        imgstack = stack_images(stack)
+        imgstack.convert('RGB')
+
+        imgstack.save(output_path)
+    elif len(filenames) == 1:
+        data = planet_image_data(filenames[0])
+        image = find_planet(data)
+        img = Image.fromarray(image.astype(np.uint8))
+        img.save(output_path)
+    return
 
 class Settings:
     def __init__(self, settings=None):

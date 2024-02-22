@@ -12,8 +12,10 @@ from flask import Flask, request, jsonify, redirect, send_from_directory
 from fits2image.conversions import fits_to_jpg
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
+from PIL import Image
+from numpy import uint8
 
-from thumbservice.common import settings, get_temp_filename_prefix
+from thumbservice.common import settings, get_temp_filename_prefix, planet_image_to_jpg
 
 
 app = Flask(__name__, static_folder='static')
@@ -122,6 +124,10 @@ def convert_to_jpg(paths, key, **params):
     fits_to_jpg(paths, jpg_path, **params)
     return jpg_path
 
+def convert_to_planet_jpg(paths, key):
+    jpg_path = f'{unique_temp_path_start()}{key}'
+    planet_image_to_jpg(paths, jpg_path)
+    return jpg_path
 
 def get_s3_client():
     config = boto3.session.Config(region_name=settings.AWS_DEFAULT_REGION, signature_version='s3v4', s3={'addressing_style': 'virtual'})
@@ -172,19 +178,29 @@ def frames_for_requestnum(request_id, request, reduction_level):
 
 
 def rvb_frames(frames):
-    FILTERS_FOR_COLORS = {
-        'red': ['R', 'rp'],
-        'visual': ['V'],
-        'blue': ['B'],
+    FILTERS = {
+        'red': ['r', 'rp','ip','h-alpha'],
+        'visual': ['v','oiii'],
+        'blue': ['b','gp','sii'],
     }
+    NARROW = ['h-alpha','oiii','sii']
+
     selected_frames = []
+    narrow_check = []
     for color in ['red', 'visual', 'blue']:
         try:
             selected_frames.append(
-                next(f for f in frames if f['primary_optical_element'] in FILTERS_FOR_COLORS[color])
+            next(f for f in frames if f['primary_optical_element'].lower() in FILTERS[color])
             )
         except StopIteration:
             raise ThumbnailAppException('RVB frames not found', status_code=404)
+
+    narrow_check = [f['primary_optical_element'].lower() for f in selected_frames if f['primary_optical_element'].lower() in NARROW]
+    if len(narrow_check) == 3 and (sorted(narrow_check) == NARROW):
+        pass
+    elif len(narrow_check) != 0:
+        raise ThumbnailAppException('Wrong combination of RVB frames', status_code=404)
+    
     return selected_frames
 
 
@@ -227,7 +243,6 @@ class Paths:
     def all_paths(self):
         return list(self._all_paths)
 
-
 def generate_thumbnail(frame, request):
     params = {
         'width': int(request.args.get('width', 200)),
@@ -237,6 +252,7 @@ def generate_thumbnail(frame, request):
         'median': request.args.get('median', 'false') != 'false',
         'percentile': float(request.args.get('percentile', 99.5)),
         'quality': int(request.args.get('quality', 80)),
+        'planet': request.args.get('planet', 'false') != 'false',
     }
     key = key_for_jpeg(frame['id'], **params)
     if key_exists(key):
@@ -251,8 +267,13 @@ def generate_thumbnail(frame, request):
             # Color thumbnails can only be generated on rlevel 91 images
             reqnum_frames = frames_for_requestnum(frame['request_id'], request, reduction_level=91)
             paths.set([save_temp_file(frame) for frame in rvb_frames(reqnum_frames)])
-            paths.set(reproject_files(paths.paths[0], paths.paths))
-        jpg_path = convert_to_jpg(paths.paths, key, **params)
+            if not params['planet']:
+                # Because there are no stars in the image, we can't align planet images this way
+                paths.set(reproject_files(paths.paths[0], paths.paths))
+        if not params['planet']:
+            jpg_path = convert_to_jpg(paths.paths, key, **params)
+        else:
+            jpg_path = convert_to_planet_jpg(paths.paths, key)
         upload_to_s3(key, jpg_path)
     finally:
         # Cleanup actions
