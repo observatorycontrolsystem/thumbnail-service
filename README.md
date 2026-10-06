@@ -59,6 +59,8 @@ Both endpoints take the following query parameters:
 * height
 * label
 * image
+* color (true|false)
+* planet (true|false)
 
 Width and height are in pixels, label will appear as white text in the lower left had corner of the image.
 
