@@ -1,9 +1,9 @@
-FROM python:3.10-alpine
+FROM python:3.13-alpine
 
 WORKDIR /app
 CMD [ "gunicorn", "--config=thumbservice/config.py", "thumbservice.thumbservice:app" ]
 
-COPY ./pyproject.toml ./poetry.lock ./
+COPY ./pyproject.toml ./poetry.lock ./poetry.toml ./
 
 RUN apk --no-cache add freetype libjpeg-turbo libpng ttf-dejavu zlib \
         && apk --no-cache add --virtual .build-deps \
@@ -18,8 +18,9 @@ RUN apk --no-cache add freetype libjpeg-turbo libpng ttf-dejavu zlib \
                 openssl-dev \
                 zlib-dev \
         && pip install --upgrade pip && pip install poetry \
-        && pip install -r <(poetry export | grep "numpy") \
-        && pip install -r <(poetry export) \
+        && poetry install \
         && apk --no-cache del .build-deps
 
 COPY . .
+
+ENV PATH="/app/.venv/bin:$PATH"
