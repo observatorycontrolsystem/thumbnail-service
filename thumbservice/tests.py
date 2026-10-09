@@ -6,7 +6,7 @@ from collections import namedtuple
 import boto3
 import pytest
 import requests
-from moto import mock_s3
+from moto import mock_aws
 
 from thumbservice import common
 from thumbservice import thumbservice
@@ -163,7 +163,7 @@ def thumbservice_client():
 @pytest.fixture
 def s3_client():
     # This should be passed in to all test functions to mock out calls to aws
-    with mock_s3():
+    with mock_aws():
         config = boto3.session.Config(signature_version='s3v4')
         s3 = boto3.client('s3', aws_access_key_id=TEST_ACCESS_KEY, aws_secret_access_key=TEST_SECRET_ACCESS_KEY, config=config)
         s3.create_bucket(Bucket=TEST_BUCKET)
