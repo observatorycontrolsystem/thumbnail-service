@@ -46,7 +46,7 @@ fits-align = "~0.4"
 gunicorn = {version = "26.2.0", extras = ["gevent"]}
 pytest = "^6"
 requests-mock = "1.7.0"
-moto = "^2"
+moto = "^5"
 astropy = "^8"
 
 [build-system]
