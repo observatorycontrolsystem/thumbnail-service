@@ -323,8 +323,7 @@ def make_depth_256(data, spansig=4):
     data is an image array
 
     Scale image data so that black is (sky - sig) and white is (sky + 5
-    * sig). If optional sky and sig keywords are not set, they are
-    calculated using getsky(data)
+    * sig). sky and sig are calculated using getsky(data)
 
    """
     depth = 256
