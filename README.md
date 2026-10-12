@@ -74,13 +74,13 @@ Cutouts can be generated using `/cutout/<basename>/`.
 
 It takes the following paramters:
 
-- x: center the cutout around this pixel
-- y: center the cutout around this pixel
-- width
-- height
-- zoom: grow/shrink the cutout (1 by default)
-- sigma: color adjustment scaling factor (4 by default)
-- ticks: whether to add a crosshairs (disabled by default; set to any value to enable)
+- x: pixel to center cutout around (default: 0)
+- y: pixel to center cutout around (default: 0)
+- width: in pixels (default: 200)
+- height: in pixels (default: 200)
+- zoom: grow/shrink the cutout (default: 1)
+- sigma: color adjustment scaling factor (default: 4)
+- ticks: whether to add a crosshairs (default: false; set to any value to enable)
 
 
 ## Example
