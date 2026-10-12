@@ -100,6 +100,7 @@ def set_test_values(tmp_path):
         settings={
             'TMP_DIR': tmp_path,
             'ARCHIVE_API_URL': TEST_API_URL,
+            'STORAGE_URL': None,
             'AWS_BUCKET': TEST_BUCKET,
             'AWS_ACCESS_KEY_ID': TEST_ACCESS_KEY,
             'AWS_SECRET_ACCESS_KEY': TEST_SECRET_ACCESS_KEY
