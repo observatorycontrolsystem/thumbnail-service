@@ -36,6 +36,7 @@ This project can be configured using the following environment variables:
 | `AWS_ACCESS_KEY_ID` | AWS Access Key ID for S3 Bucket | 'changeme'
 | `AWS_SECRET_ACCESS_KEY` | AWS Secret Access Key for S3 Bucket | 'changeme'
 | `STORAGE_URL` | URL for bucket storage if different than AWS. Defaults to None to connect to AWS S3 | None
+| `STORAGE_URL_STYLE` | S3 URL style. Can be 'virtual' or 'path'. | 'virtual'
 | `REQUIRED_FRAME_VALIDATION_KEYS` | Keys from Archive API record required in order to create a thumbnail from the FITS image | 'configuration_type,request_id,filename'
 | `VALID_CONFIGURATION_TYPES` | Only generate thumbnails from images of these configuration types | 'ARC,BIAS,BPM,DARK,DOUBLE,EXPERIMENTAL,EXPOSE,GUIDE,LAMPFLAT,SKYFLAT,SPECTRUM,STANDARD,TARGET,TRAILED'
 | `VALID_CONFIGURATION_TYPES_FOR_COLOR_THUMBS` | Only generate color thumbnails from images of these configuration types | 'EXPOSE,STANDARD'
@@ -48,7 +49,9 @@ documentation for more details.
 
 ## Endpoints
 
-There are only 2 endpoints: `/<frame_id>/` and `/<basename>/` where `frame_id` is the ID of the frame
+### Full Frame
+
+There are 2 endpoints: `/<frame_id>/` and `/<basename>/` where `frame_id` is the ID of the frame
 in the archive, and `basename` is the base part of the filename (no file extension) you wish to make
 a thumbnail of. Using the frame_id is faster to return if you happen to know it
 ahead of time.
@@ -65,7 +68,47 @@ Width and height are in pixels, label will appear as white text in the lower lef
 They both **return a url** to the thumbnail file that will be good for 1 week unless the `image` parameter
 is supplied which will return an image directly.
 
+### Cutout
+
+Cutouts can be generated using `/cutout/<basename>/`.
+
+It takes the following paramters:
+
+- x: center the cutout around this pixel
+- y: center the cutout around this pixel
+- width
+- height
+- zoom: grow/shrink the cutout (1 by default)
+- sigma: color adjustment scaling factor (4 by default)
+- ticks: whether to add a crosshairs (disabled by default; set to any value to enable)
+
 
 ## Example
 
 [https://thumbnails.lco.global/3863274/?width=500&height=500&label=So%20many%20stars](https://thumbnails.lco.global/3863274/?width=500&height=500&label=So%20many%20stars)
+
+## Development
+
+Setup a mock S3:
+
+```sh
+docker run -d --rm -p 9090:9090 -p 9191:9191 -e COM_ADOBE_TESTING_S3MOCK_STORE_INITIAL_BUCKETS=thumbservice --name thumbservice-mock-s3 adobe/s3mock
+```
+
+Install dependencies:
+
+```sh
+poetry install
+```
+
+Set needed envrionment variables:
+
+```sh
+export ARCHIVE_API_URL=https://archive-api.lco.global/ AWS_BUCKET=thumbservice STORAGE_URL=http://localhost:9090 STORAGE_URL_STYLE=path
+```
+
+Run server:
+
+```sh
+poetry run python -m thumbservice.thumbservice
+```

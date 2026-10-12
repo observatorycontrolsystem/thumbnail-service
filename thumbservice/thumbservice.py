@@ -128,7 +128,7 @@ def convert_to_jpg(paths, key, **params):
 
 
 def get_s3_client():
-    config = boto3.session.Config(region_name=settings.AWS_DEFAULT_REGION, signature_version='s3v4', s3={'addressing_style': 'virtual'})
+    config = boto3.session.Config(region_name=settings.AWS_DEFAULT_REGION, signature_version='s3v4', s3={'addressing_style': settings.STORAGE_URL_STYLE})
     return boto3.client(
         's3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
@@ -354,6 +354,15 @@ def make_depth_256(data, spansig=4):
     return data
 
 
+def find_first_2d_hdu(hdul: fits.HDUList):
+    for hdu in hdul:
+        shape = getattr(hdu, 'shape', ())
+        if len(shape) == 2 and all(shape):
+            return hdu
+
+    raise Exception('No 2D HDU found')
+
+
 def generate_cutout_thumbnail(frame, request):
     params = {
         'x': int(request.args.get('x', 0)),
@@ -389,12 +398,22 @@ def generate_cutout_thumbnail(frame, request):
 
         fits_path = save_temp_file(frame)
         with fits.open(fits_path) as hdul:
-            try:
-                cutout = Cutout2D(hdul[0].data, position=(x, y), size=(width, height), mode='trim')
-            except NoOverlapError:
-                raise ThumbnailAppException("x, y, width, height combo leads to no overlapping region", status_code=400)
+            hdu = find_first_2d_hdu(hdul)
 
-            color_corrected_cutout = make_depth_256(cutout, sigma)
+            # Primary header contains certain keywords that may be lacking from the 2D HDU
+            # But still give precedence to keywords in 2D HDU
+            primary_hdu = hdul[0]
+            if hdu is not primary_hdu:
+                phead_copy = primary_hdu.header.copy()
+                phead_copy.update(hdu.header)
+                hdu.header = phead_copy
+
+            try:
+                cutout = Cutout2D(hdu.data, position=(x, y), size=(int(round(width/zoom)), int(round(height/zoom))), mode='partial', fill_value=0)
+            except NoOverlapError:
+                raise ThumbnailAppException("x, y, width, height, zoom combo leads to no overlapping region", status_code=400)
+
+            color_corrected_cutout = make_depth_256(cutout.data, sigma)
 
             im = Image.fromarray(color_corrected_cutout.astype(np.uint8), mode='L')
 
@@ -407,7 +426,7 @@ def generate_cutout_thumbnail(frame, request):
 
             # resize the image
             nx, ny = im.size
-            im = im.resize((int(nx * zoom), int(ny * zoom)), filt)
+            im = im.resize((int(round(nx * zoom)), int(round(ny * zoom))), filt)
 
             # now flip/rotate the image as appropiate
             im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM).convert('RGB')
@@ -417,8 +436,8 @@ def generate_cutout_thumbnail(frame, request):
                 yoff = 1.0
 
                 cutoutx, cutouty = cutout.input_position_cutout
-                x_new = int(round(cutoutx + xoff * zoom))
-                y_new = int(round(cutouty + yoff * zoom))
+                x_new = int(round((cutoutx + xoff) * zoom))
+                y_new = int(round((cutouty + yoff) * zoom))
 
                 draw = ImageDraw.Draw(im)
                 draw.line((x_new,y_new+7,x_new,y_new+25), fill='white')
@@ -477,7 +496,7 @@ def bn_thumbnail(frame_basename):
     return handle_response(frames['results'][0], request)
 
 
-@app.route('/cutout/<fname_basename>/')
+@app.route('/cutout/<frame_basename>/')
 def cutout(frame_basename):
     headers = {
         'Authorization': request.headers.get('Authorization')

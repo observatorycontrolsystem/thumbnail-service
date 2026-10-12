@@ -1,7 +1,6 @@
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 
 WORKDIR /app
-CMD [ "gunicorn", "--config=thumbservice/config.py", "thumbservice.thumbservice:app" ]
 
 COPY ./pyproject.toml ./poetry.lock ./poetry.toml ./
 
@@ -24,3 +23,5 @@ RUN apk --no-cache add freetype libjpeg-turbo libpng ttf-dejavu zlib \
 COPY . .
 
 ENV PATH="/app/.venv/bin:$PATH"
+
+CMD [ "gunicorn", "-b", "0.0.0.0:8000", "--config=thumbservice/config.py", "thumbservice.thumbservice:app" ]

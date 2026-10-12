@@ -166,7 +166,7 @@ def s3_client():
     with mock_aws():
         config = boto3.session.Config(signature_version='s3v4')
         s3 = boto3.client('s3', aws_access_key_id=TEST_ACCESS_KEY, aws_secret_access_key=TEST_SECRET_ACCESS_KEY, config=config)
-        s3.create_bucket(Bucket=TEST_BUCKET)
+        s3.create_bucket(Bucket=TEST_BUCKET, CreateBucketConfiguration={'LocationConstraint': 'us-west-2'})
         yield s3
 
 
@@ -369,5 +369,15 @@ def test_frame_basename_does_not_exist(thumbservice_client, requests_mock, tmp_p
     }
     requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=some_frame_that_doesnt_exist', json=empty_results)
     response = thumbservice_client.get('/some_frame_that_doesnt_exist/')
+    assert response.status_code == 404
+    assert len(list(tmp_path.glob('*'))) == 0
+
+def test_cutout_basename_does_not_exist(thumbservice_client, requests_mock, tmp_path, s3_client):
+    empty_results = {
+        'count': 0,
+        'results': []
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=some_frame_that_doesnt_exist', json=empty_results)
+    response = thumbservice_client.get('cutout/some_frame_that_doesnt_exist/')
     assert response.status_code == 404
     assert len(list(tmp_path.glob('*'))) == 0
