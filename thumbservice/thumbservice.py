@@ -15,6 +15,7 @@ from fits_align.ident import make_transforms
 from fits_align.align import affineremap
 from astropy.io import fits
 from astropy.nddata import Cutout2D, NoOverlapError
+from astropy.stats.sigma_clipping import sigma_clipped_stats
 from PIL import Image, ImageDraw
 
 from thumbservice.common import settings, get_temp_filename_prefix
@@ -299,19 +300,7 @@ def getsky(data):
     sample = sample.reshape(nsample)
 
     # determine the clipped mean and standard deviation
-    mean = sample.mean()
-    std = sample.std()
-    oldsize = 0
-    niter = 0
-    while oldsize != sample.size and niter < maxiter:
-        niter += 1
-        oldsize = sample.size
-        wok = (sample < mean + 3 * std)
-        sample = sample[wok]
-        wok = (sample > mean - 3 * std)
-        sample = sample[wok]
-        mean = sample.mean()
-        std = sample.std()
+    mean, _, std = sigma_clipped_stats(sample, sigma=3, maxiters=maxiter)
 
     return mean, std
 
