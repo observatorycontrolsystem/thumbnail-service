@@ -408,7 +408,9 @@ def generate_cutout_thumbnail(frame, request):
                 hdu.header = phead_copy
 
             try:
-                cutout = Cutout2D(hdu.data, position=(x, y), size=(int(round(width/zoom)), int(round(height/zoom))), mode='partial', fill_value=0)
+                zoomed_width = int(round(width/zoom))
+                zoomed_height = int(round(height/zoom))
+                cutout = Cutout2D(hdu.data, position=(x, y), size=(zoomed_height, zoomed_width), mode='partial', fill_value=0)
             except NoOverlapError:
                 raise ThumbnailAppException("x, y, width, height, zoom combo leads to no overlapping region", status_code=400)
 
