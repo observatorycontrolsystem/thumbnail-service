@@ -466,7 +466,7 @@ def handle_cutout_response(frame, request):
         raise ThumbnailAppException(can_generate_thumbnail_on_frame['reason'], status_code=400)
 
     url = generate_cutout_thumbnail(frame, request)
-    if request.args.get('image'):
+    if request.args.get('image', 'false') != 'false':
         return redirect(url)
     else:
         return jsonify({'url': url})

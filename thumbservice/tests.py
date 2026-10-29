@@ -7,6 +7,7 @@ import boto3
 import pytest
 import requests
 from moto import mock_aws
+from astropy.nddata import NoOverlapError
 
 from thumbservice import common
 from thumbservice import thumbservice
@@ -382,3 +383,207 @@ def test_cutout_basename_does_not_exist(thumbservice_client, requests_mock, tmp_
     response = thumbservice_client.get('cutout/some_frame_that_doesnt_exist/')
     assert response.status_code == 404
     assert len(list(tmp_path.glob('*'))) == 0
+
+def test_cutout_multiple_basename_matches(thumbservice_client, requests_mock, tmp_path, s3_client):
+    archiveapi_results = {
+        'count': 2,
+        'results': [{}, {}]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    response = thumbservice_client.get('cutout/something/')
+    assert response.status_code == 404
+
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_cannot_generate_thumbail_on_frame(mock_can_generate_thumbnail_on, thumbservice_client, requests_mock, tmp_path, s3_client):
+    archiveapi_results = {
+        'count': 1,
+        'results': [{}]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': False, 'reason': 'Some reason'}
+    response = thumbservice_client.get('cutout/something/')
+    assert response.status_code == 400
+    assert 'Some reason' in response.get_json()['message']
+
+@mock.patch("thumbservice.thumbservice.generate_cutout_thumbnail")
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_image_arg(
+    mock_can_generate_thumbnail_on,
+    mock_generate_cutout_thumbnail,
+    thumbservice_client,
+    requests_mock,
+    tmp_path,
+    s3_client
+):
+    archiveapi_results = {
+        'count': 1,
+        'results': [{}]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': True, 'reason': ''}
+    mock_generate_cutout_thumbnail.return_value = 'https://host.invalid/path'
+
+    response = thumbservice_client.get('cutout/something/?image=anything-but-false')
+    assert response.status_code == 302
+    assert response.headers['Location'] == 'https://host.invalid/path'
+
+    response = thumbservice_client.get('cutout/something/?image=')
+    assert response.status_code == 302
+    assert response.headers['Location'] == 'https://host.invalid/path'
+
+    response = thumbservice_client.get('cutout/something/?image=false')
+    assert response.status_code == 200
+    assert response.get_json()['url'] == 'https://host.invalid/path'
+
+    response = thumbservice_client.get('cutout/something/')
+    assert response.status_code == 200
+    assert response.get_json()['url'] == 'https://host.invalid/path'
+
+@mock.patch("thumbservice.thumbservice.generate_url")
+@mock.patch("thumbservice.thumbservice.key_for_jpeg")
+@mock.patch("thumbservice.thumbservice.key_exists")
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_jpg_exists_already(
+    mock_can_generate_thumbnail_on,
+    mock_key_exists,
+    mock_key_for_jpeg,
+    mock_generate_url,
+    thumbservice_client,
+    requests_mock,
+    tmp_path,
+    s3_client
+):
+    archiveapi_results = {
+        'count': 1,
+        'results': [
+            {
+                'configuration_type': 'EXPOSE',
+                'filename': 'something.fits.fz',
+                'id': 11245132,
+                'url': 'http://file_url_1',
+                'proposal_id': 'LCOEPO2018B-002',
+                'request_id': 1756835,
+                'primary_optical_element': 'B',
+                'reduction_level': 91
+            },
+        ]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': True, 'reason': ''}
+    mock_key_exists.return_value = True
+    mock_generate_url.return_value = "https://invalid.host/path"
+
+    response = thumbservice_client.get('cutout/something/')
+
+    assert response.status_code == 200
+    mock_key_for_jpeg.assert_called_once()
+    mock_generate_url.assert_called_once_with(mock_key_for_jpeg())
+
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_zoom_leq_zero(
+    mock_can_generate_thumbnail_on,
+    thumbservice_client,
+    requests_mock,
+    tmp_path,
+    s3_client
+):
+    archiveapi_results = {
+        'count': 1,
+        'results': [
+            {
+                'configuration_type': 'EXPOSE',
+                'filename': 'something.fits.fz',
+                'id': 11245132,
+                'url': 'http://file_url_1',
+                'proposal_id': 'LCOEPO2018B-002',
+                'request_id': 1756835,
+                'primary_optical_element': 'B',
+                'reduction_level': 91
+            },
+        ]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': True, 'reason': ''}
+
+    response = thumbservice_client.get('cutout/something/?zoom=0')
+    assert response.status_code == 400
+    assert 'zoom must be greater than 0' in response.get_json()['message']
+
+    response = thumbservice_client.get('cutout/something/?zoom=-1')
+    assert response.status_code == 400
+    assert 'zoom must be greater than 0' in response.get_json()['message']
+
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_sigma_leq_zero(
+    mock_can_generate_thumbnail_on,
+    thumbservice_client,
+    requests_mock,
+    tmp_path,
+    s3_client
+):
+    archiveapi_results = {
+        'count': 1,
+        'results': [
+            {
+                'configuration_type': 'EXPOSE',
+                'filename': 'something.fits.fz',
+                'id': 11245132,
+                'url': 'http://file_url_1',
+                'proposal_id': 'LCOEPO2018B-002',
+                'request_id': 1756835,
+                'primary_optical_element': 'B',
+                'reduction_level': 91
+            },
+        ]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': True, 'reason': ''}
+
+    response = thumbservice_client.get('cutout/something/?sigma=0')
+    assert response.status_code == 400
+    assert 'sigma must be greater than 0' in response.get_json()['message']
+
+    response = thumbservice_client.get('cutout/something/?sigma=-1')
+    assert response.status_code == 400
+    assert 'sigma must be greater than 0' in response.get_json()['message']
+
+@mock.patch("thumbservice.thumbservice.os.remove")
+@mock.patch("thumbservice.thumbservice.Cutout2D")
+@mock.patch("thumbservice.thumbservice.find_first_2d_hdu")
+@mock.patch("thumbservice.thumbservice.fits")
+@mock.patch("thumbservice.thumbservice.save_temp_file")
+@mock.patch("thumbservice.thumbservice.can_generate_thumbnail_on")
+def test_cutout_no_overlaperror(
+    mock_can_generate_thumbnail_on,
+    mock_save_temp_file,
+    mock_fits,
+    mock_find_first_2d_hdu,
+    mock_Cutout2D,
+    mock_os_remove,
+    thumbservice_client,
+    requests_mock,
+    tmp_path,
+    s3_client
+):
+    archiveapi_results = {
+        'count': 1,
+        'results': [
+            {
+                'configuration_type': 'EXPOSE',
+                'filename': 'something.fits.fz',
+                'id': 11245132,
+                'url': 'http://file_url_1',
+                'proposal_id': 'LCOEPO2018B-002',
+                'request_id': 1756835,
+                'primary_optical_element': 'B',
+                'reduction_level': 91
+            },
+        ]
+    }
+    requests_mock.get(f'{TEST_API_URL}frames/?basename_exact=something', json=archiveapi_results)
+    mock_can_generate_thumbnail_on.return_value = {'result': True, 'reason': ''}
+    mock_Cutout2D.side_effect = NoOverlapError
+
+    response = thumbservice_client.get('cutout/something/')
+    assert response.status_code == 400
+    assert 'x, y, width, height, zoom combo leads to no overlapping region' in response.get_json()['message']
