@@ -18,6 +18,7 @@ class Settings:
         self.AWS_SECRET_ACCESS_KEY = self.set_value('AWS_SECRET_ACCESS_KEY', 'changeme')
         self.AWS_DEFAULT_REGION = self.set_value('AWS_DEFAULT_REGION', 'us-west-2')
         self.STORAGE_URL = self.set_value('STORAGE_URL', None)
+        self.STORAGE_URL_STYLE = self.set_value('STORAGE_URL_STYLE', 'virtual')
         self.REQUIRED_FRAME_VALIDATION_KEYS = self.get_tuple_from_environment('REQUIRED_FRAME_VALIDATION_KEYS', 'configuration_type,request_id,filename')
         self.VALID_CONFIGURATION_TYPES = self.get_tuple_from_environment('VALID_CONFIGURATION_TYPES', 'ARC,BIAS,BPM,DARK,DOUBLE,EXPERIMENTAL,EXPOSE,GUIDE,LAMPFLAT,SKYFLAT,SPECTRUM,STANDARD,TARGET,TRAILED')
         self.VALID_CONFIGURATION_TYPES_FOR_COLOR_THUMBS = self.get_tuple_from_environment('VALID_CONFIGURATION_TYPES_FOR_COLOR_THUMBS', 'EXPOSE,STANDARD')

@@ -6,12 +6,17 @@ import hashlib
 
 import boto3
 import requests
+import numpy as np
 from flask_cors import CORS
 from flask.logging import default_handler
 from flask import Flask, request, jsonify, redirect, send_from_directory
 from fits2image.conversions import fits_to_jpg
 from fits_align.ident import make_transforms
 from fits_align.align import affineremap
+from astropy.io import fits
+from astropy.nddata import Cutout2D, NoOverlapError
+from astropy.stats.sigma_clipping import sigma_clipped_stats
+from PIL import Image, ImageDraw
 
 from thumbservice.common import settings, get_temp_filename_prefix
 
@@ -124,7 +129,7 @@ def convert_to_jpg(paths, key, **params):
 
 
 def get_s3_client():
-    config = boto3.session.Config(region_name=settings.AWS_DEFAULT_REGION, signature_version='s3v4', s3={'addressing_style': 'virtual'})
+    config = boto3.session.Config(region_name=settings.AWS_DEFAULT_REGION, signature_version='s3v4', s3={'addressing_style': settings.STORAGE_URL_STYLE})
     return boto3.client(
         's3',
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
@@ -264,6 +269,185 @@ def generate_thumbnail(frame, request):
     return generate_url(key)
 
 
+def getsky(data):
+    """
+    Determine the sky parameters for a FITS data extension.
+
+    data -- array holding the image data
+    """
+
+    # maximum number of interations for mean,std loop
+    maxiter = 30
+
+    # maximum number of data points to sample
+    maxsample = 10000
+
+    # size of the array
+    ny, nx = data.shape
+
+    # how many sampels should we take?
+    if data.size > maxsample:
+        nsample = maxsample
+    else:
+        nsample = data.size
+
+    # create sample indicies
+    xs = np.random.uniform(low=0, high=nx, size=nsample).astype('L')
+    ys = np.random.uniform(low=0, high=ny, size=nsample).astype('L')
+
+    # sample the data
+    sample = data[ys, xs].copy()
+    sample = sample.reshape(nsample)
+
+    # determine the clipped mean and standard deviation
+    mean, _, std = sigma_clipped_stats(sample, sigma=3, maxiters=maxiter)
+
+    return mean, std
+
+
+def make_depth_256(data, spansig=4):
+    """
+    Convert image to 256 colors.
+
+    data is an image array
+
+    Scale image data so that black is (sky - sig) and white is (sky + 5
+    * sig). sky and sig are calculated using getsky(data)
+
+   """
+    depth = 256
+    zerosig = 0
+    data = data.astype(np.float64)
+    sky, sig = getsky(data)
+
+    # set the color range
+    zero = sky + zerosig * sig
+    span = spansig * sig
+
+    # scale the data to the requested display values
+    # greys
+    data -= zero
+    data *= (depth - 1) / span
+
+    # black
+    w = data < 0
+    data[w] = 0
+
+    # white
+    w = data > (depth - 1)
+    data[w] = (depth - 1)
+
+    data += 256 - depth
+
+    return data
+
+
+def find_first_2d_hdu(hdul: fits.HDUList):
+    for hdu in hdul:
+        shape = getattr(hdu, 'shape', ())
+        if len(shape) == 2 and all(shape):
+            return hdu
+
+    raise Exception('No 2D HDU found')
+
+
+def generate_cutout_thumbnail(frame, request):
+    params = {
+        'x': int(request.args.get('x', 0)),
+        'y': int(request.args.get('y', 0)),
+        'width': int(request.args.get('width', 200)),
+        'height': int(request.args.get('height', 200)),
+        'zoom': float(request.args.get('zoom', 1.0)),
+        'sigma': float(request.args.get('sigma', 4.0)),
+        'ticks': request.args.get('ticks', 'false') != 'false',
+    }
+    key = key_for_jpeg(frame['id'], **params)
+    if key_exists(key):
+        return generate_url(key)
+
+    fits_path = None
+    jpg_path = None
+    try:
+        x = params['x']
+        y = params['y']
+        width = params['width']
+        height = params['height']
+        zoom = params['zoom']
+        sigma = params['sigma']
+        ticks = params['ticks']
+
+        # x, y, width, height validation is left up to astropy
+
+        if zoom <= 0:
+            raise ThumbnailAppException("zoom must be greater than 0", status_code=400)
+
+        if sigma <= 0:
+            raise ThumbnailAppException("sigma must be greater than 0", status_code=400)
+
+        fits_path = save_temp_file(frame)
+        with fits.open(fits_path) as hdul:
+            hdu = find_first_2d_hdu(hdul)
+
+            # Primary header contains certain keywords that may be lacking from the 2D HDU
+            # But still give precedence to keywords in 2D HDU
+            primary_hdu = hdul[0]
+            if hdu is not primary_hdu:
+                phead_copy = primary_hdu.header.copy()
+                phead_copy.update(hdu.header)
+                hdu.header = phead_copy
+
+            try:
+                zoomed_width = int(round(width/zoom))
+                zoomed_height = int(round(height/zoom))
+                cutout = Cutout2D(hdu.data, position=(x, y), size=(zoomed_height, zoomed_width), mode='partial', fill_value=0)
+            except NoOverlapError:
+                raise ThumbnailAppException("x, y, width, height, zoom combo leads to no overlapping region", status_code=400)
+
+            color_corrected_cutout = make_depth_256(cutout.data, sigma)
+
+            im = Image.fromarray(color_corrected_cutout.astype(np.uint8), mode='L')
+
+            if zoom < 1.0:
+                # shrink image
+                filt = Image.Resampling.LANCZOS
+            else:
+                # grow image
+                filt = Image.Resampling.NEAREST
+
+            # resize the image
+            nx, ny = im.size
+            im = im.resize((int(round(nx * zoom)), int(round(ny * zoom))), filt)
+
+            # now flip/rotate the image as appropiate
+            im = im.transpose(Image.Transpose.FLIP_TOP_BOTTOM).convert('RGB')
+
+            if ticks:
+                xoff = -0.5
+                yoff = 1.0
+
+                cutoutx, cutouty = cutout.input_position_cutout
+                x_new = int(round((cutoutx + xoff) * zoom))
+                y_new = int(round((cutouty + yoff) * zoom))
+
+                draw = ImageDraw.Draw(im)
+                draw.line((x_new,y_new+7,x_new,y_new+25), fill='white')
+                draw.line((x_new-7,y_new,x_new-25,y_new), fill='white')
+
+            jpg_path = f'{unique_temp_path_start()}{key}'
+            im.save(jpg_path, "JPEG")
+
+        upload_to_s3(key, jpg_path)
+    finally:
+        # Cleanup actions
+        if jpg_path and os.path.exists(jpg_path):
+            os.remove(jpg_path)
+
+        if fits_path and os.path.exists(fits_path):
+            os.remove(fits_path)
+
+    return generate_url(key)
+
+
 def handle_response(frame, request):
     can_generate_thumbnail_on_frame = can_generate_thumbnail_on(frame, request)
     if not can_generate_thumbnail_on_frame['result']:
@@ -274,6 +458,18 @@ def handle_response(frame, request):
         return redirect(url)
     else:
         return jsonify({'url': url, 'propid': frame['proposal_id']})
+
+
+def handle_cutout_response(frame, request):
+    can_generate_thumbnail_on_frame = can_generate_thumbnail_on(frame, request)
+    if not can_generate_thumbnail_on_frame['result']:
+        raise ThumbnailAppException(can_generate_thumbnail_on_frame['reason'], status_code=400)
+
+    url = generate_cutout_thumbnail(frame, request)
+    if request.args.get('image', 'false') != 'false':
+        return redirect(url)
+    else:
+        return jsonify({'url': url})
 
 
 @app.route('/<frame_basename>/')
@@ -288,6 +484,20 @@ def bn_thumbnail(frame_basename):
         raise ThumbnailAppException('Not found', status_code=404)
 
     return handle_response(frames['results'][0], request)
+
+
+@app.route('/cutout/<frame_basename>/')
+def cutout(frame_basename):
+    headers = {
+        'Authorization': request.headers.get('Authorization')
+    }
+    params = {'basename_exact': frame_basename}
+    frames = get_response(f'{settings.ARCHIVE_API_URL}frames/', params=params, headers=headers).json()
+
+    if not frames['count'] == 1:
+        raise ThumbnailAppException('Not found', status_code=404)
+
+    return handle_cutout_response(frames['results'][0], request)
 
 
 @app.route('/<int:frame_id>/')
